@@ -94,32 +94,6 @@ def progressbar(text,maximum):
 	finally:
 		bar.close()
 
-class Progressbar(object):
-	def __init__(self,text,maximum):
-		self._value  = 0
-		bus_name, object_path = text_cmd('kdialog','--progressbar',text,str(maximum),'--caption',CAPTION).split()
-
-	def step(self):
-		self.value = self._value + 1
-
-	def _get_value(self):
-		return self._value
-
-	def _set_value(self,value):
-		check_call_errmsg(['qdbus',self._handle[0], self._handle[1], 'org.kde.kdialog.ProgressDialog.value', str(value)])
-		self._value = value
-
-	value = property(_get_value, _set_value)
-
-	def close(self):
-		check_call_errmsg(['qdbus',self._handle[0], self._handle[1], 'org.kde.kdialog.ProgressDialog.close'])
-
-	def __enter__(self):
-		return self
-
-	def __exit__(self, exc_type=None, exc_value=None, trackeback=None):
-		self.close()
-
 def get_video_from_m3u(curl=None,outfile=None):
 	try:
 		if curl is None:

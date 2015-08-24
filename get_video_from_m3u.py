@@ -182,7 +182,8 @@ def get_video_from_m3u(curl=None,outfile=None):
 				chunk_urls = [urljoin(m3u_url, line) for line in data.split('\n') if line and line[0] != '#']
 				chunk_count = len(chunk_urls)
 
-				progress.maximum = chunk_count
+				progress_prop = dbus.Interface(progress, 'org.freedesktop.DBus.Properties')
+				progress_prop.Set('org.kde.kdialog.ProgressDialog','maximum',chunk_count)
 				start_time = time()
 
 				with open(outfile,'wb') as fp:
@@ -201,12 +202,12 @@ def get_video_from_m3u(curl=None,outfile=None):
 						esttime = avgtime * chunk_count
 						remtime = esttime - elapsed
 
-						progress.value = value
+						progress_prop.Set('org.kde.kdialog.ProgressDialog','value',value)
 						progress.setLabelText('Downloading »%s« ETA -%s' % (outname, fmt_span(remtime)))
 						if progress.wasCancelled():
 							raise KeyboardInterrupt
 
-		passive_popup('Filished saving video: '+outfile)
+		passive_popup('Finished saving video: '+outfile)
 
 	except KeyboardInterrupt:
 		print("\ndownload canceled by user")

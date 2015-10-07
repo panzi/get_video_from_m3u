@@ -16,9 +16,13 @@ from urlparse import urljoin, urlparse
 from contextlib import closing, contextmanager
 
 RE_EXT = re.compile('\.[a-z]*$',re.I)
+RE_PARAM = re.compile(r'\s*(?P<name>[-a-z][-a-z0-9]*)\s*=\s*(:?"(?P<qstr>[^\n\r"]*)"|(?P<str>[^,\s]*))\s*',re.I)
+RE_DELIM = re.compile(r'\s*,\s*')
 CAPTION = 'Get Video from M3U'
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.157 Safari/537.36'
 DROP_HEADERS = {'if-none-match', 'if-modified-since', 'accept-encoding', 'upgrade-insecure-requests', 'connection'}
+
+EXT_WITH_ATTRS = {'EXT-X-MEDIA', 'EXT-X-STREAM-INF', 'EXT-X-I-FRAME-STREAM-INF', 'EXT-X-KEY', 'EXT-X-MAP', 'EXT-X-I-FRAME-STREAM-INF'}
 
 def fmt_span(seconds):
 	minutes  = seconds // 60
@@ -93,6 +97,109 @@ def progressbar(text,maximum):
 		yield bar
 	finally:
 		bar.close()
+
+class Track(object):
+	__slots__ = 'url', 'meta'
+	def __init__(self, url=None, meta=None):
+		self.url  = url
+		self.meta = meta or {}
+
+class Playlist(object):
+	__solts__ = 'tracks', 'meta'
+	def __init__(self):
+		self.tracks = []
+		self.meta   = {}
+
+def parse_meta(line):
+	meta = {}
+	if line[:1] == '#':
+		line = line[1:]
+
+	parts = line.split(':',1)
+
+	if len(parts) == 1:
+		return line, None
+
+	hdr, params = parts
+
+	if hdr == 'EXTINF':
+		duration, title = params.split(',',1)
+		return hdr, {'DURATION': float(duration), 'TITLE': title}
+
+	elif hdr in EXT_WITH_ATTRS:
+		parsers = EXT_PARSERS.get(hdr)
+		i = 0
+		n = len(params)
+		while i < n:
+			m = RE_PARAM.match(params, i)
+			if not m:
+				raise SyntaxError("illegal ext inf: %s" % line)
+			name = m.group('name')
+			qval = m.group('qstr')
+			val  = m.group('str')
+			if parsers:
+				value = parsers.get(name, lambda qval, val: qval or val or '')(qval, val)
+			else:
+				value = qval or val or ''
+			meta[name] = value
+			i = m.end()
+			if i < n:
+				m = RE_DELIM.match(params, i)
+				if not m:
+					raise SyntaxError("illegal ext inf: %s" % line)
+				i = m.end()
+		return hdr, meta
+	else:
+		return hdr, params
+
+def track_sort_key(track):
+	if 'RESOLUTION' in track.meta:
+		width, height = track.meta['RESOLUTION']
+		return height, width
+	else:
+		return 480, 640
+
+EXT_PARSERS = {
+	'EXT-X-STREAM-INF': {
+		'BANDWIDTH':       lambda qval, val: int(val,10),
+		'CODECS':          lambda qval, val: qval.split(',') if qval else [],
+		'RESOLUTION':      lambda qval, val: tuple(int(px) for px in val.split('x',1)),
+		'CLOSED-CAPTIONS': lambda qval, val: qval if val != 'NONE' else None
+	}
+}
+
+def parse_m3u8(data,base_url):
+	pl = Playlist()
+	lines = data.split("\n")
+	if lines:
+		if lines[0] == "#EXTM3U":
+			it = iter(lines)
+			next(it)
+			while True:
+				try:
+					line = next(it)
+				except StopIteration:
+					break
+				else:
+					if not line:
+						pass
+					elif line.startswith('#'):
+						hdr, meta = parse_meta(line)
+						if hdr in ('EXTINF', 'EXT-X-STREAM-INF'):
+							url = next(it)
+							track = Track(urljoin(base_url, url))
+							track.meta.update(meta)
+							track.meta['STREAM'] = hdr == 'EXT-X-STREAM-INF'
+							pl.tracks.append(track)
+						elif meta is not None:
+							pl.meta[hdr] = meta
+					else:
+						pl.tracks.append(Track(urljoin(base_url, line)))
+		else:
+			for line in lines:
+				if line and not line.startswith('#'):
+					pl.tracks.append(Track(urljoin(base_url, line)))
+	return pl
 
 def get_video_from_m3u(curl=None,outfile=None):
 	try:
@@ -179,17 +286,33 @@ def get_video_from_m3u(curl=None,outfile=None):
 					if progress.wasCancelled():
 						raise KeyboardInterrupt
 
-				chunk_urls = [urljoin(m3u_url, line) for line in data.split('\n') if line and line[0] != '#']
-				chunk_count = len(chunk_urls)
+				playlist = parse_m3u8(data, m3u_url)
+				if any(track.meta['STREAM'] for track in playlist.tracks):
+					# it was only a master.m3u8 that points to more playlists
+					# this chooses the highest resolution or last entry:
+					tracks = sorted(playlist.tracks, key=track_sort_key)
+					m3u_url = tracks[-1].url
+					print(m3u_url)
+
+					resp = session.get(m3u_url, headers=headers)
+					resp.raise_for_status()
+					data = resp.text
+
+					if progress.wasCancelled():
+						raise KeyboardInterrupt
+
+					playlist = parse_m3u8(data, m3u_url)
+
+				chunk_count = len(playlist.tracks)
 
 				progress_prop = dbus.Interface(progress, 'org.freedesktop.DBus.Properties')
 				progress_prop.Set('org.kde.kdialog.ProgressDialog','maximum',chunk_count)
 				start_time = time()
 
 				with open(outfile,'wb') as fp:
-					for i, chunk_url in enumerate(chunk_urls):
-						print('downloading:',chunk_url)
-						with closing(session.get(chunk_url, headers=headers, stream=True)) as resp:
+					for i, track in enumerate(playlist.tracks):
+						print('downloading:',track.url)
+						with closing(session.get(track.url, headers=headers, stream=True)) as resp:
 							resp.raise_for_status()
 							for data in resp.iter_content(8192):
 								fp.write(data)

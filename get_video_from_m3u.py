@@ -67,6 +67,25 @@ def inputbox(msg,init=''):
 def warning_yes_no(text):
 	return bool_cmd('kdialog','--warningyesno',text,'--caption',CAPTION)
 
+def menu(text,items,default=None):
+	cmd = ['kdialog','--menu',text]
+	default_item = None
+
+	for tag, item in items:
+		cmd.append(tag)
+		cmd.append(item)
+		if tag == default:
+			default_item = item
+
+	if default_item is not None:
+		cmd.append('--default')
+		cmd.append(default_item)
+
+	cmd.append('--caption')
+	cmd.append(CAPTION)
+
+	return text_cmd(*cmd)
+
 def get_save_filename(dirname=None,filter=None):
 	if dirname is None:
 		dirname = os.getenv("HOME") or os.path.abspath(".")
@@ -103,6 +122,23 @@ class Track(object):
 	def __init__(self, url=None, meta=None):
 		self.url  = url
 		self.meta = meta or {}
+
+	def label(self):
+		print(self.meta)
+		res    = self.meta.get('RESOLUTION')
+		codecs = self.meta.get('CODECS')
+		buf = []
+
+		if res:
+			buf.append('%dx%d' % res)
+
+		if codecs:
+			buf.append(', '.join(codecs))
+
+		if buf:
+			return ', '.join(buf)
+		else:
+			return self.url
 
 class Playlist(object):
 	__solts__ = 'tracks', 'meta'
@@ -288,11 +324,11 @@ def get_video_from_m3u(curl=None,outfile=None):
 
 				playlist = parse_m3u8(data, m3u_url)
 				if any(track.meta['STREAM'] for track in playlist.tracks):
-					# it was only a master.m3u8 that points to more playlists
-					# this chooses the highest resolution or last entry:
+					# it was only a master.m3u8 that points to more streams
+					# preselect the highest resolution (or last entry if there is no resolution information):
 					tracks = sorted(playlist.tracks, key=track_sort_key)
-					m3u_url = tracks[-1].url
-					print(m3u_url)
+					items = [(track.url, track.label()) for track in playlist.tracks]
+					m3u_url = menu('Please choose stream to download:',items,default=tracks[-1].url)
 
 					resp = session.get(m3u_url, headers=headers)
 					resp.raise_for_status()

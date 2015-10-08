@@ -124,7 +124,6 @@ class Track(object):
 		self.meta = meta or {}
 
 	def label(self):
-		print(self.meta)
 		res    = self.meta.get('RESOLUTION')
 		codecs = self.meta.get('CODECS')
 		buf = []

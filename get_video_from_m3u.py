@@ -158,8 +158,11 @@ def parse_meta(line):
 	hdr, params = parts
 
 	if hdr == 'EXTINF':
-		duration, title = params.split(',',1)
-		return hdr, {'DURATION': float(duration), 'TITLE': title}
+		params = params.split(',',1)
+		meta = {'DURATION': float(params[0])}
+		if len(params) > 1:
+			meta['TITLE'] = params[1]
+		return hdr, meta
 
 	elif hdr in EXT_WITH_ATTRS:
 		parsers = EXT_PARSERS.get(hdr)

@@ -278,7 +278,7 @@ def parse_curl(curl):
 
 	return m3u_url, headers
 
-def get_video_from_m3u(meta,outfile,thread_count=3):
+def get_video_from_m3u(meta,outfile,thread_count=6):
 	try:
 		running  = True
 		headers  = meta['headers']

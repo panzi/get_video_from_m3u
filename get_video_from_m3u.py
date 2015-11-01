@@ -472,12 +472,6 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 		if outfile is not None:
 			passive_popup('Download canceled by user: '+outfile)
 
-def download_parts():
-	pass
-
-def assemble_parts():
-	pass
-
 def main(args):
 	if len(args) < 1:
 		outfile = get_save_filename(filter='*.ts')

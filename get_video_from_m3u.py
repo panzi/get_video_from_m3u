@@ -11,7 +11,6 @@ import shlex
 import traceback
 import requests
 import requests.utils
-import dbus
 import json
 import shutil
 from time import time
@@ -186,6 +185,7 @@ class ProgressBar(object):
 
 class KDialogProgressBar(ProgressBar):
 	def __init__(self, label, maximum):
+		import dbus
 		bus_name, object_path = text_cmd('kdialog', '--progressbar', text, str(maximum), '--caption', CAPTION).split()
 		bus = dbus.SessionBus()
 		bar = bus.get_object(bus_name, object_path)

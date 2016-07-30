@@ -18,5 +18,5 @@ Dependencies
 
  * [Python](https://www.python.org/)
  * [Requests: HTTP for Humans](http://docs.python-requests.org/en/latest/)
- * [DBus-Python](https://pypi.python.org/pypi/dbus-python/)
- * [KDE](https://www.kde.org/) (for kdialog)
+ * [DBus-Python](https://pypi.python.org/pypi/dbus-python/) (optional for KDE GUI)
+ * [KDE](https://www.kde.org/) (for kdialog, optional)

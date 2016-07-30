@@ -17,6 +17,7 @@ from lxml import html
 from urlparse import urljoin, urlparse
 from threading import Thread
 from contextlib import closing, contextmanager
+from urllib import quote
 
 try:
 	from Queue import Queue
@@ -30,6 +31,9 @@ USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Ge
 DROP_HEADERS = {'if-none-match', 'if-modified-since', 'accept-encoding', 'upgrade-insecure-requests', 'connection'}
 
 EXT_WITH_ATTRS = {'EXT-X-MEDIA', 'EXT-X-STREAM-INF', 'EXT-X-I-FRAME-STREAM-INF', 'EXT-X-KEY', 'EXT-X-MAP', 'EXT-X-I-FRAME-STREAM-INF'}
+
+def mkquery(**query):
+	return '&'.join(quote(k) + '=' + quote(query[k]) for k in query)
 
 def fmt_span(seconds):
 	minutes  = seconds // 60
@@ -181,9 +185,10 @@ def parse_meta(line):
 				raise SyntaxError("Illegal ext inf in playlist: %s" % line)
 			name = m.group('name')
 			qval = m.group('qstr')
-			val  = m.group('str')
+			val  = m.group('str') or qval
+			quoted = qval is not None
 			if parsers:
-				value = parsers.get(name, lambda qval, val: qval or val or '')(qval, val)
+				value = parsers.get(name, lambda val, quoted: val or '')(val, quoted)
 			else:
 				value = qval or val or ''
 			meta[name] = value
@@ -206,10 +211,10 @@ def track_sort_key(track):
 
 EXT_PARSERS = {
 	'EXT-X-STREAM-INF': {
-		'BANDWIDTH':       lambda qval, val: int(val, 10),
-		'CODECS':          lambda qval, val: qval.split(',') if qval else [],
-		'RESOLUTION':      lambda qval, val: tuple(int(px) for px in val.split('x', 1)),
-		'CLOSED-CAPTIONS': lambda qval, val: qval if val != 'NONE' else None
+		'BANDWIDTH':       lambda val, quoted: int(val, 10),
+		'CODECS':          lambda val, quoted: val.split(',') if val else [],
+		'RESOLUTION':      lambda val, quoted: tuple(int(px) for px in val.split('x', 1)),
+		'CLOSED-CAPTIONS': lambda val, quoted: val if quoted or val != 'NONE' else None
 	}
 }
 
@@ -331,6 +336,7 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 					if content_type == 'text/html' and resp.url.startswith('https://www.periscope.tv/'):
 						# it was a periscope video page (html) instead
 						broadcast_id = urlparse(resp.url).path.split('/')[2]
+
 						resp = session.get('https://api.periscope.tv/api/v2/accessVideoPublic?broadcast_id='+broadcast_id, headers=headers)
 						resp.raise_for_status()
 						data = json.loads(resp.text)
@@ -338,6 +344,33 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 
 						if progress.wasCancelled():
 							raise KeyboardInterrupt
+
+						resp = session.get(m3u_url, headers=headers)
+						resp.raise_for_status()
+						data = resp.text
+						content_type = resp.headers['content-type'].split(";")[0]
+
+						if progress.wasCancelled():
+							raise KeyboardInterrupt
+
+					elif content_type == 'text/html' and resp.url.startswith('https://www.twitch.tv/'):
+						# it was a twitch video page (html) instead
+						broadcast_id = urlparse(resp.url).path.split('/')[3]
+
+						resp = session.get("https://api.twitch.tv/api/vods/%s/access_token?need_https=false" % broadcast_id, headers=headers)
+						resp.raise_for_status()
+						data = json.loads(resp.text)
+
+						if progress.wasCancelled():
+							raise KeyboardInterrupt
+
+						m3u_url = "https://usher.ttvnw.net/vod/%s.m3u8?%s" % (broadcast_id, mkquery(
+							nauth=data['token'],
+							nauthsig=data['sig'],
+							allow_source='true',
+							allow_spectre='true' #,
+#							p=??? # TODO: find out where this comes from, but seems to be ignored anyway
+						))
 
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()
@@ -356,8 +389,12 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 						# it was only a master.m3u8 that points to more streams
 						# preselect the highest resolution (or last entry if there is no resolution information):
 						tracks = sorted(playlist.tracks, key=track_sort_key)
-						items = [(track.url, track.label()) for track in playlist.tracks]
-						m3u_url = menu('Please choose stream to download:', items, default=tracks[-1].url)
+
+						if len(tracks) == 1:
+							m3u_url = tracks[0].url
+						else:
+							items = [(track.url, track.label()) for track in playlist.tracks]
+							m3u_url = menu('Please choose stream to download:', items, default=tracks[-1].url)
 
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()

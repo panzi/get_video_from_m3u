@@ -23,8 +23,7 @@ try:
 except ImportError:
 	from queue import Queue
 
-RE_EXT = re.compile('\.[a-z]*$',re.I)
-RE_PARAM = re.compile(r'\s*(?P<name>[-a-z][-a-z0-9]*)\s*=\s*(:?"(?P<qstr>[^\n\r"]*)"|(?P<str>[^,\s]*))\s*',re.I)
+RE_PARAM = re.compile(r'\s*(?P<name>[-a-z][-a-z0-9]*)\s*=\s*(:?"(?P<qstr>[^\n\r"]*)"|(?P<str>[^,\s]*))\s*', re.I)
 RE_DELIM = re.compile(r'\s*,\s*')
 CAPTION = 'Get Video from M3U'
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.157 Safari/537.36'
@@ -58,8 +57,8 @@ def bool_cmd(*cmd):
 	else:
 		raise KeyboardInterrupt
 
-def check_call_errmsg(cmd,stdout=None):
-	p = subprocess.Popen(cmd,stdout=stdout,stderr=subprocess.PIPE)
+def check_call_errmsg(cmd, stdout=None):
+	p = subprocess.Popen(cmd, stdout=stdout, stderr=subprocess.PIPE)
 	if stdout == subprocess.PIPE:
 		out = p.stdout.read()
 	else:
@@ -69,14 +68,14 @@ def check_call_errmsg(cmd,stdout=None):
 		raise ValueError(errmsg.strip())
 	return out
 
-def inputbox(msg,init=''):
-	return text_cmd('kdialog','--inputbox',msg,init,'--caption',CAPTION)
+def inputbox(msg, init=''):
+	return text_cmd('kdialog', '--inputbox', msg, init, '--caption', CAPTION)
 
 def warning_yes_no(text):
-	return bool_cmd('kdialog','--warningyesno',text,'--caption',CAPTION)
+	return bool_cmd('kdialog', '--warningyesno', text, '--caption', CAPTION)
 
-def menu(text,items,default=None):
-	cmd = ['kdialog','--menu',text]
+def menu(text, items, default=None):
+	cmd = ['kdialog', '--menu', text]
 	default_item = None
 
 	for tag, item in items:
@@ -94,10 +93,10 @@ def menu(text,items,default=None):
 
 	return text_cmd(*cmd)
 
-def get_save_filename(dirname=None,filter=None):
+def get_save_filename(dirname=None, filter=None):
 	if dirname is None:
 		dirname = os.getenv("HOME") or os.path.abspath(".")
-	cmd = ['kdialog','--getsavefilename',dirname]
+	cmd = ['kdialog', '--getsavefilename', dirname]
 	if filter:
 		cmd.append(filter)
 	cmd.append('--caption')
@@ -109,15 +108,15 @@ def get_save_filename(dirname=None,filter=None):
 			warning_yes_no('File already exists. Do you want to overwrite it?'):
 			return outfile
 
-def passive_popup(text,timeout=5):
-	subprocess.check_call(['kdialog','--passivepopup',text,str(timeout),'--caption',CAPTION])
+def passive_popup(text, timeout=5):
+	subprocess.check_call(['kdialog', '--passivepopup', text, str(timeout), '--caption', CAPTION])
 
 def show_error(text):
-	subprocess.check_call(['kdialog','--error',text,'--caption',CAPTION])
+	subprocess.check_call(['kdialog', '--error', text, '--caption', CAPTION])
 
 @contextmanager
-def progressbar(text,maximum):
-	bus_name, object_path = text_cmd('kdialog','--progressbar',text,str(maximum),'--caption',CAPTION).split()
+def progressbar(text, maximum):
+	bus_name, object_path = text_cmd('kdialog', '--progressbar', text, str(maximum), '--caption', CAPTION).split()
 	bus = dbus.SessionBus()
 	bar = bus.get_object(bus_name, object_path)
 	try:
@@ -158,7 +157,7 @@ def parse_meta(line):
 	if line[:1] == '#':
 		line = line[1:]
 
-	parts = line.split(':',1)
+	parts = line.split(':', 1)
 
 	if len(parts) == 1:
 		return line, None
@@ -166,7 +165,7 @@ def parse_meta(line):
 	hdr, params = parts
 
 	if hdr == 'EXTINF':
-		params = params.split(',',1)
+		params = params.split(',', 1)
 		meta = {'DURATION': float(params[0])}
 		if len(params) > 1:
 			meta['TITLE'] = params[1]
@@ -207,14 +206,14 @@ def track_sort_key(track):
 
 EXT_PARSERS = {
 	'EXT-X-STREAM-INF': {
-		'BANDWIDTH':       lambda qval, val: int(val,10),
+		'BANDWIDTH':       lambda qval, val: int(val, 10),
 		'CODECS':          lambda qval, val: qval.split(',') if qval else [],
-		'RESOLUTION':      lambda qval, val: tuple(int(px) for px in val.split('x',1)),
+		'RESOLUTION':      lambda qval, val: tuple(int(px) for px in val.split('x', 1)),
 		'CLOSED-CAPTIONS': lambda qval, val: qval if val != 'NONE' else None
 	}
 }
 
-def parse_m3u8(data,base_url):
+def parse_m3u8(data, base_url):
 	pl = Playlist()
 	lines = data.split("\n")
 	if lines:
@@ -259,7 +258,7 @@ def parse_curl(curl):
 		next(it)
 		for arg in it:
 			if arg == '-H':
-				key, value = next(it).split(':',1)
+				key, value = next(it).split(':', 1)
 				key = key.lower()
 				if key not in DROP_HEADERS:
 					headers[key] = value.strip()
@@ -278,7 +277,7 @@ def parse_curl(curl):
 
 	return m3u_url, headers
 
-def get_video_from_m3u(meta,outfile,thread_count=6):
+def get_video_from_m3u(meta, outfile, thread_count=6):
 	try:
 		running  = True
 		headers  = meta['headers']
@@ -291,7 +290,7 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 			raise ValueError('thread_count must be greater than or equal 1')
 
 		with requests.session() as session:
-			with progressbar('Downloading »%s« ETA ---:--:--' % outname,1) as progress:
+			with progressbar('Downloading »%s« ETA ---:--:--' % outname, 1) as progress:
 				progress.showCancelButton(True)
 
 				if 'playlist' in meta:
@@ -313,11 +312,11 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 					if content_type == 'text/html':
 						# it was html, lets try to resolve crappy refresh redirect like t.co uses
 						doc = html.fromstring(data)
-						meta = doc.cssselect("meta[http-equiv='refresh']")
-						if meta:
+						meta_el = doc.cssselect("meta[http-equiv='refresh']")
+						if meta_el:
 							params = {}
-							for param in meta[0].attrib['content'].split(";")[1:]:
-								key, val = param.split('=',1)
+							for param in meta_el[0].attrib['content'].split(";")[1:]:
+								key, val = param.split('=', 1)
 								params[key.lower()] = val
 
 							m3u_url = params['url']
@@ -331,15 +330,14 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 
 					if content_type == 'text/html' and resp.url.startswith('https://www.periscope.tv/'):
 						# it was a periscope video page (html) instead
-						doc = html.fromstring(data)
-						meta = doc.cssselect("meta[property='og:image']")
+						broadcast_id = urlparse(resp.url).path.split('/')[2]
+						resp = session.get('https://api.periscope.tv/api/v2/accessVideoPublic?broadcast_id='+broadcast_id, headers=headers)
+						resp.raise_for_status()
+						data = json.loads(resp.text)
+						m3u_url = data['replay_url']
 
-						if not meta:
-							raise Exception("Could not find video info in referred page.")
-
-						image_url = urlparse(meta[0].attrib['content'])
-						code      = RE_EXT.sub('', image_url.path.split("/")[2])
-						m3u_url   = 'https://replay.periscope.tv/%s/playlist.m3u8' % code
+						if progress.wasCancelled():
+							raise KeyboardInterrupt
 
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()
@@ -359,7 +357,7 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 						# preselect the highest resolution (or last entry if there is no resolution information):
 						tracks = sorted(playlist.tracks, key=track_sort_key)
 						items = [(track.url, track.label()) for track in playlist.tracks]
-						m3u_url = menu('Please choose stream to download:',items,default=tracks[-1].url)
+						m3u_url = menu('Please choose stream to download:', items, default=tracks[-1].url)
 
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()
@@ -378,7 +376,7 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 					if not os.path.exists(cachedir):
 						os.mkdir(cachedir)
 
-					with open(metaname,'wb') as fp:
+					with open(metaname, 'wb') as fp:
 						json.dump(meta, fp)
 
 				chunk_count = len(playlist.tracks)
@@ -395,7 +393,7 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 						todo.append((i, playlist.tracks[i], chunkpath))
 
 				progress_prop = dbus.Interface(progress, 'org.freedesktop.DBus.Properties')
-				progress_prop.Set('org.kde.kdialog.ProgressDialog','maximum',len(missing_tracks))
+				progress_prop.Set('org.kde.kdialog.ProgressDialog', 'maximum', len(missing_tracks))
 				start_time = time()
 				finished_queue = Queue()
 				worker_queues = [Queue() for i in range(thread_count)]
@@ -409,7 +407,7 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 							i, track, chunkpath = item
 							dlpath = chunkpath + '.download'
 							print('downloading: %s -> %d.ts' % (track.url, i))
-							with open(dlpath,'wb') as fp:
+							with open(dlpath, 'wb') as fp:
 								with closing(session.get(track.url, headers=headers, stream=True)) as resp:
 									resp.raise_for_status()
 									for data in resp.iter_content(8192):
@@ -425,7 +423,7 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 
 				workers = []
 				for i in range(thread_count):
-					thread = Thread(target=worker_func,args=(worker_queues[i],))
+					thread = Thread(target=worker_func, args=(worker_queues[i],))
 					thread.daemon = True
 					workers.append(thread)
 					thread.start()
@@ -449,17 +447,17 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 					esttime  = avgtime * len(todo)
 					remtime  = esttime - elapsed
 
-					progress_prop.Set('org.kde.kdialog.ProgressDialog','value',dl_count)
+					progress_prop.Set('org.kde.kdialog.ProgressDialog', 'value', dl_count)
 					progress.setLabelText('Downloading »%s« ETA -%s' % (outname, fmt_span(remtime)))
 					if progress.wasCancelled():
 						raise KeyboardInterrupt
 
-				progress_prop.Set('org.kde.kdialog.ProgressDialog','maximum',len(playlist.tracks))
-				progress_prop.Set('org.kde.kdialog.ProgressDialog','value',0)
+				progress_prop.Set('org.kde.kdialog.ProgressDialog', 'maximum', len(playlist.tracks))
+				progress_prop.Set('org.kde.kdialog.ProgressDialog', 'value', 0)
 				progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
-				with open(outfile,'wb') as fp:
+				with open(outfile, 'wb') as fp:
 					for i in range(len(playlist.tracks)):
-						progress_prop.Set('org.kde.kdialog.ProgressDialog','value', i+1)
+						progress_prop.Set('org.kde.kdialog.ProgressDialog', 'value', i+1)
 						progress.setLabelText('Assembling »%s« %d/%d' % (outname, i+1, len(playlist.tracks)))
 						chunkpath = os.path.join(cachedir, '%d.ts' % i)
 						with open(chunkpath, 'rb') as chunkfp:
@@ -496,7 +494,7 @@ def main(args):
 		if len(args) < 2:
 			curl = inputbox('Paste M3U URL/cURL from network tab:')
 		else:
-			curl = sys.argv[2]
+			curl = ' '.join(sys.argv[2:])
 		m3u_url, headers = parse_curl(curl)
 		meta = {'headers': headers, 'm3u_url': m3u_url}
 

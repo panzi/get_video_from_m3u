@@ -5,10 +5,12 @@ from __future__ import print_function, division
 
 import re
 import os
+import sys
 import subprocess
 import shlex
 import traceback
 import requests
+import requests.utils
 import dbus
 import json
 import shutil
@@ -16,7 +18,7 @@ from time import time
 from lxml import html
 from urlparse import urljoin, urlparse
 from threading import Thread
-from contextlib import closing, contextmanager
+from contextlib import closing
 from urllib import quote
 
 try:
@@ -41,6 +43,16 @@ def fmt_span(seconds):
 	hours    = minutes // 60
 	minutes -= hours * 60
 	return "%02d:%02d:%02d" % (hours, minutes, seconds)
+
+def has_kdialog():
+	try:
+		p = subprocess.Popen(['kdialog', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		p.stdout.read()
+		if p.wait() != 0:
+			return False
+	except OSError as e:
+		return False
+	return True
 
 def text_cmd(*cmd):
 	p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
@@ -72,61 +84,236 @@ def check_call_errmsg(cmd, stdout=None):
 		raise ValueError(errmsg.strip())
 	return out
 
-def inputbox(msg, init=''):
-	return text_cmd('kdialog', '--inputbox', msg, init, '--caption', CAPTION)
+class GUI(object):
+	def inputbox(self, msg, init=''):
+		raise NotImplementedError
 
-def warning_yes_no(text):
-	return bool_cmd('kdialog', '--warningyesno', text, '--caption', CAPTION)
+	def warning_yes_no(self, text):
+		raise NotImplementedError
 
-def menu(text, items, default=None):
-	cmd = ['kdialog', '--menu', text]
-	default_item = None
+	def menu(self, text, items, default=None):
+		raise NotImplementedError
 
-	for tag, item in items:
-		cmd.append(tag)
-		cmd.append(item)
-		if tag == default:
-			default_item = item
+	def get_save_filename(self, dirname=None, filter=None):
+		raise NotImplementedError
 
-	if default_item is not None:
-		cmd.append('--default')
-		cmd.append(default_item)
+	def passive_popup(self, text, timeout=5):
+		raise NotImplementedError
 
-	cmd.append('--caption')
-	cmd.append(CAPTION)
+	def show_error(self, text):
+		raise NotImplementedError
 
-	return text_cmd(*cmd)
+	def progressbar(self, text, maximum):
+		raise NotImplementedError
 
-def get_save_filename(dirname=None, filter=None):
-	if dirname is None:
-		dirname = os.getenv("HOME") or os.path.abspath(".")
-	cmd = ['kdialog', '--getsavefilename', dirname]
-	if filter:
-		cmd.append(filter)
-	cmd.append('--caption')
-	cmd.append(CAPTION)
+	def log(self, msg):
+		print(msg)
 
-	while True:
-		outfile = text_cmd(*cmd)
-		if not os.path.exists(outfile) or \
-			warning_yes_no('File already exists. Do you want to overwrite it?'):
-			return outfile
+	def __enter__(self):
+		return self
 
-def passive_popup(text, timeout=5):
-	subprocess.check_call(['kdialog', '--passivepopup', text, str(timeout), '--caption', CAPTION])
+	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
+		pass
 
-def show_error(text):
-	subprocess.check_call(['kdialog', '--error', text, '--caption', CAPTION])
+class KDialogGUI(GUI):
+	def inputbox(self, msg, init=''):
+		return text_cmd('kdialog', '--inputbox', msg, init, '--caption', CAPTION)
 
-@contextmanager
-def progressbar(text, maximum):
-	bus_name, object_path = text_cmd('kdialog', '--progressbar', text, str(maximum), '--caption', CAPTION).split()
-	bus = dbus.SessionBus()
-	bar = bus.get_object(bus_name, object_path)
-	try:
-		yield bar
-	finally:
-		bar.close()
+	def warning_yes_no(self, text):
+		return bool_cmd('kdialog', '--warningyesno', text, '--caption', CAPTION)
+
+	def menu(self, text, items, default=None):
+		cmd = ['kdialog', '--menu', text]
+		default_item = None
+
+		for tag, item in items:
+			cmd.append(tag)
+			cmd.append(item)
+			if tag == default:
+				default_item = item
+
+		if default_item is not None:
+			cmd.append('--default')
+			cmd.append(default_item)
+
+		cmd.append('--caption')
+		cmd.append(CAPTION)
+
+		return text_cmd(*cmd)
+
+	def get_save_filename(self, dirname=None, filter=None):
+		if dirname is None:
+			dirname = os.getenv("HOME") or os.path.abspath(".")
+		cmd = ['kdialog', '--getsavefilename', dirname]
+		if filter:
+			cmd.append(filter)
+		cmd.append('--caption')
+		cmd.append(CAPTION)
+
+		while True:
+			outfile = text_cmd(*cmd)
+			if not os.path.exists(outfile) or \
+				self.warning_yes_no('File already exists. Do you want to overwrite it?'):
+				return outfile
+
+	def passive_popup(self, text, timeout=5):
+		subprocess.check_call(['kdialog', '--passivepopup', text, str(timeout), '--caption', CAPTION])
+
+	def show_error(self, text):
+		subprocess.check_call(['kdialog', '--error', text, '--caption', CAPTION])
+
+	def progressbar(self, text, maximum):
+		return KDialogProgressBar(text, maximum)
+
+class ProgressBar(object):
+	def wasCancelled(self):
+		return False
+
+	def setMaximum(self, maximum):
+		raise NotImplementedError
+
+	def setValue(self, value):
+		raise NotImplementedError
+
+	def setLabelText(self, label):
+		raise NotImplementedError
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
+		pass
+
+class KDialogProgressBar(ProgressBar):
+	def __init__(self, label, maximum):
+		bus_name, object_path = text_cmd('kdialog', '--progressbar', text, str(maximum), '--caption', CAPTION).split()
+		bus = dbus.SessionBus()
+		bar = bus.get_object(bus_name, object_path)
+		bar.showCancelButton(True)
+		self.bar = bar
+		self.props = dbus.Interface(bar, 'org.freedesktop.DBus.Properties')
+
+	def wasCancelled(self):
+		return self.bar.wasCancelled()
+
+	def setMaximum(self, maximum):
+		self.props.Set('org.kde.kdialog.ProgressDialog', 'maximum', len(maximum))
+
+	def setValue(self, value):
+		self.props.Set('org.kde.kdialog.ProgressDialog', 'value', value)
+
+	def setLabelText(self, label):
+		self.bar.setLabelText(label)
+
+	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
+		self.bar.close()
+
+class TextProgressBar(ProgressBar):
+	def __init__(self, label, maximum):
+		self._label = label
+		self._maximum = maximum
+		self._value = 0
+		self._barlen = 0
+		self._redraw()
+
+	def setMaximum(self, maximum):
+		if self._maximum != maximum:
+			self._maximum = maximum
+			self._recalc_bar()
+
+	def setValue(self, value):
+		if self._value != value:
+			self._value = value
+			self._recalc_bar()
+
+	def _recalc_bar(self):
+		if self._value >= self._maximum:
+			barlen = 80
+		elif self._value > 0:
+			barlen = ((80 * (self._value - 1)) // self._maximum)
+		else:
+			barlen = 0
+
+		if self._barlen != barlen:
+			self._barlen = barlen
+			self._redraw()
+
+	def setLabelText(self, label):
+		if self._label != label:
+			self._label = label
+			self._redraw()
+
+	def _redraw(self):
+		bar = '=' * self._barlen + '>'
+		sys.stdout.write('\r%s [%-80s]        ' % (self._label, bar))
+
+	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
+		sys.stdout.write('\n')
+
+YES = {'y', 'yes', '1', 'true', 't', 'on'}
+NO  = {'n', 'no', '0', 'false', 'f', 'off'}
+
+class TextGUI(GUI):
+	def inputbox(self, msg, init=''):
+		sys.stdout.write('\x1B[?25h')
+		try:
+			return raw_input(msg + ' ')
+		finally:
+			sys.stdout.write('\x1B[?25l')
+
+	def warning_yes_no(self, text):
+		while True:
+			value = self.inputbox('%s (Y/N):' % text).strip().lower()
+
+			if value in YES:
+				return True
+			elif value in NO:
+				return False
+
+	def menu(self, text, items, default=None):
+		while True:
+			print(text)
+			for index, (tag, item) in enumerate(items):
+				s = '%d %s' % (index + 1, item)
+				if tag == default:
+					s += ' (default)'
+				print(s)
+			value = self.inputbox('choice (1-%d):').strip()
+			if not value and default is not None:
+				return default
+			try:
+				value = int(value, 10) - 1
+				if value < 0:
+					raise IndexError
+				return items[value][0]
+			except (IndexError, ValueError):
+				pass
+			print('')
+
+	def get_save_filename(self, dirname=None, filter=None):
+		while True:
+			path = self.inputbox('Enter file path:')
+			if path:
+				return path
+
+	def passive_popup(self, text, timeout=5):
+		print(text)
+
+	def show_error(self, text):
+		sys.stderr.write('*** Error: %s\n' % text)
+
+	def progressbar(self, text, maximum):
+		return TextProgressBar(text, maximum)
+
+	def log(self, msg):
+		pass
+
+	def __enter__(self):
+		sys.stdout.write('\x1B[?25l')
+		return self
+
+	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
+		sys.stdout.write('\x1B[?25h')
 
 class Track(object):
 	__slots__ = 'url', 'meta'
@@ -282,7 +469,7 @@ def parse_curl(curl):
 
 	return m3u_url, headers
 
-def get_video_from_m3u(meta, outfile, thread_count=6):
+def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 	try:
 		running  = True
 		headers  = meta['headers']
@@ -295,9 +482,10 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 			raise ValueError('thread_count must be greater than or equal 1')
 
 		with requests.session() as session:
-			with progressbar('Downloading »%s« ETA ---:--:--' % outname, 1) as progress:
-				progress.showCancelButton(True)
+			if 'cookies' in meta:
+				session.cookies = requests.utils.cookiejar_from_dict(meta['cookies'])
 
+			with gui.progressbar('Downloading »%s« ETA ---:--:--' % outname, 1) as progress:
 				if 'playlist' in meta:
 					pl = meta['playlist']
 					playlist = Playlist()
@@ -394,7 +582,7 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 							m3u_url = tracks[0].url
 						else:
 							items = [(track.url, track.label()) for track in playlist.tracks]
-							m3u_url = menu('Please choose stream to download:', items, default=tracks[-1].url)
+							m3u_url = gui.menu('Please choose stream to download:', items, default=tracks[-1].url)
 
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()
@@ -405,6 +593,7 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 
 						playlist = parse_m3u8(data, m3u_url)
 
+					meta['cookies'] = requests.utils.dict_from_cookiejar(session.cookies)
 					meta['playlist'] = {
 						'meta':   playlist.meta,
 						'tracks': [{'url':track.url, 'meta':track.meta} for track in playlist.tracks]
@@ -429,8 +618,7 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 						missing_tracks.add(i)
 						todo.append((i, playlist.tracks[i], chunkpath))
 
-				progress_prop = dbus.Interface(progress, 'org.freedesktop.DBus.Properties')
-				progress_prop.Set('org.kde.kdialog.ProgressDialog', 'maximum', len(missing_tracks))
+				progress.setMaximum(len(missing_tracks))
 				start_time = time()
 				finished_queue = Queue()
 				worker_queues = [Queue() for i in range(thread_count)]
@@ -443,7 +631,7 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 								break
 							i, track, chunkpath = item
 							dlpath = chunkpath + '.download'
-							print('downloading: %s -> %d.ts' % (track.url, i))
+							gui.log('downloading: %s -> %d.ts' % (track.url, i))
 							with open(dlpath, 'wb') as fp:
 								with closing(session.get(track.url, headers=headers, stream=True)) as resp:
 									resp.raise_for_status()
@@ -484,17 +672,17 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 					esttime  = avgtime * len(todo)
 					remtime  = esttime - elapsed
 
-					progress_prop.Set('org.kde.kdialog.ProgressDialog', 'value', dl_count)
+					progress.setValue(dl_count)
 					progress.setLabelText('Downloading »%s« ETA -%s' % (outname, fmt_span(remtime)))
 					if progress.wasCancelled():
 						raise KeyboardInterrupt
 
-				progress_prop.Set('org.kde.kdialog.ProgressDialog', 'maximum', len(playlist.tracks))
-				progress_prop.Set('org.kde.kdialog.ProgressDialog', 'value', 0)
+				progress.setMaximum(len(playlist.tracks))
+				progress.setValue(0)
 				progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
 				with open(outfile, 'wb') as fp:
 					for i in range(len(playlist.tracks)):
-						progress_prop.Set('org.kde.kdialog.ProgressDialog', 'value', i+1)
+						progress.setValue(i + 1)
 						progress.setLabelText('Assembling »%s« %d/%d' % (outname, i+1, len(playlist.tracks)))
 						chunkpath = os.path.join(cachedir, '%d.ts' % i)
 						with open(chunkpath, 'rb') as chunkfp:
@@ -505,43 +693,58 @@ def get_video_from_m3u(meta, outfile, thread_count=6):
 
 				shutil.rmtree(cachedir)
 
-		passive_popup('Finished saving video: '+outfile)
+		gui.passive_popup('Finished saving video: '+outfile)
 
 	except KeyboardInterrupt:
-		print("\ndownload canceled by user")
+		gui.log("\ndownload canceled by user")
 		if outfile is not None:
-			passive_popup('Download canceled by user: '+outfile)
+			gui.passive_popup('Download canceled by user: '+outfile)
 
 def main(args):
-	if len(args) < 1:
-		outfile = get_save_filename(filter='*.ts')
-	else:
-		outfile = sys.argv[1]
-
-	cachedir = outfile + '.download'
-	metaname = os.path.join(cachedir, 'download.json')
-	meta = None
-
-	if os.path.exists(metaname):
-		if warning_yes_no('Continue in progress download?'):
-			with open(metaname, 'rb') as fp:
-				meta = json.load(fp)
-
-	if meta is None:
-		if len(args) < 2:
-			curl = inputbox('Paste M3U URL/cURL from network tab:')
+	use_gui = None
+	while args:
+		if args[0] == '--gui':
+			use_gui = True
+			del args[0]
+		elif args[0] == '--no-gui':
+			use_gui = False
+			del args[0]
 		else:
-			curl = ' '.join(sys.argv[2:])
-		m3u_url, headers = parse_curl(curl)
-		meta = {'headers': headers, 'm3u_url': m3u_url}
+			break
 
-	get_video_from_m3u(meta, outfile)
+	if use_gui is None:
+		use_gui = has_kdialog()
+
+	with (KDialogGUI() if use_gui else TextGUI()) as gui:
+		try:
+			if len(args) < 1:
+				outfile = gui.get_save_filename(filter='*.ts')
+			else:
+				outfile = sys.argv[1]
+
+			cachedir = outfile + '.download'
+			metaname = os.path.join(cachedir, 'download.json')
+			meta = None
+
+			if os.path.exists(metaname):
+				if gui.warning_yes_no('Continue in progress download?'):
+					with open(metaname, 'rb') as fp:
+						meta = json.load(fp)
+
+			if meta is None:
+				if len(args) < 2:
+					curl = gui.inputbox('Paste M3U URL/cURL from network tab:')
+				else:
+					curl = ' '.join(sys.argv[2:])
+				m3u_url, headers = parse_curl(curl)
+				meta = {'headers': headers, 'm3u_url': m3u_url}
+
+			get_video_from_m3u(meta, outfile, gui)
+
+		except Exception as e:
+			traceback.print_exc()
+			gui.show_error(str(e))
 
 if __name__ == '__main__':
 	import sys
-	try:
-		main(sys.argv[1:])
-
-	except Exception as e:
-		traceback.print_exc()
-		show_error(str(e))
+	main(sys.argv[1:])

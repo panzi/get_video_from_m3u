@@ -179,7 +179,7 @@ def parse_meta(line):
 		while i < n:
 			m = RE_PARAM.match(params, i)
 			if not m:
-				raise SyntaxError("illegal ext inf: %s" % line)
+				raise SyntaxError("Illegal ext inf in playlist: %s" % line)
 			name = m.group('name')
 			qval = m.group('qstr')
 			val  = m.group('str')
@@ -192,7 +192,7 @@ def parse_meta(line):
 			if i < n:
 				m = RE_DELIM.match(params, i)
 				if not m:
-					raise SyntaxError("illegal ext inf: %s" % line)
+					raise SyntaxError("Illegal ext inf in playlist: %s" % line)
 				i = m.end()
 		return hdr, meta
 	else:
@@ -324,17 +324,18 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 							resp = session.get(m3u_url, headers=headers)
 							resp.raise_for_status()
 							data = resp.text
+							content_type = resp.headers['content-type'].split(";")[0]
 
 							if progress.wasCancelled():
 								raise KeyboardInterrupt
 
-					if resp.url.startswith('https://www.periscope.tv/w/'):
+					if content_type == 'text/html' and resp.url.startswith('https://www.periscope.tv/'):
 						# it was a periscope video page (html) instead
 						doc = html.fromstring(data)
 						meta = doc.cssselect("meta[property='og:image']")
 
 						if not meta:
-							raise Exception("could not find video info in referred page")
+							raise Exception("Could not find video info in referred page.")
 
 						image_url = urlparse(meta[0].attrib['content'])
 						code      = RE_EXT.sub('', image_url.path.split("/")[2])
@@ -343,9 +344,13 @@ def get_video_from_m3u(meta,outfile,thread_count=6):
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()
 						data = resp.text
+						content_type = resp.headers['content-type'].split(";")[0]
 
 						if progress.wasCancelled():
 							raise KeyboardInterrupt
+
+					if content_type == 'text/html':
+						raise Exception("Link points to a webpage, not a m3u playlist.")
 
 					playlist = parse_m3u8(data, m3u_url)
 

@@ -186,7 +186,7 @@ class ProgressBar(object):
 class KDialogProgressBar(ProgressBar):
 	def __init__(self, label, maximum):
 		import dbus
-		bus_name, object_path = text_cmd('kdialog', '--progressbar', text, str(maximum), '--caption', CAPTION).split()
+		bus_name, object_path = text_cmd('kdialog', '--progressbar', label, str(maximum), '--caption', CAPTION).split()
 		bus = dbus.SessionBus()
 		bar = bus.get_object(bus_name, object_path)
 		bar.showCancelButton(True)
@@ -197,7 +197,7 @@ class KDialogProgressBar(ProgressBar):
 		return self.bar.wasCancelled()
 
 	def setMaximum(self, maximum):
-		self.props.Set('org.kde.kdialog.ProgressDialog', 'maximum', len(maximum))
+		self.props.Set('org.kde.kdialog.ProgressDialog', 'maximum', maximum)
 
 	def setValue(self, value):
 		self.props.Set('org.kde.kdialog.ProgressDialog', 'value', value)

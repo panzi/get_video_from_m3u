@@ -25,6 +25,13 @@ try:
 except ImportError:
 	from queue import Queue
 
+try:
+	import dbus
+except ImportError:
+	has_dbus = False
+else:
+	has_dbus = True
+
 RE_PARAM = re.compile(r'\s*(?P<name>[-a-z][-a-z0-9]*)\s*=\s*(:?"(?P<qstr>[^\n\r"]*)"|(?P<str>[^,\s]*))\s*', re.I)
 RE_DELIM = re.compile(r'\s*,\s*')
 CAPTION = 'Get Video from M3U'
@@ -44,6 +51,8 @@ def fmt_span(seconds):
 	return "%02d:%02d:%02d" % (hours, minutes, seconds)
 
 def has_kdialog():
+	if not has_dbus:
+		return False
 	try:
 		p = subprocess.Popen(['kdialog', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 		p.stdout.read()
@@ -185,7 +194,6 @@ class ProgressBar(object):
 
 class KDialogProgressBar(ProgressBar):
 	def __init__(self, label, maximum):
-		import dbus
 		bus_name, object_path = text_cmd('kdialog', '--progressbar', label, str(maximum), '--caption', CAPTION).split()
 		bus = dbus.SessionBus()
 		bar = bus.get_object(bus_name, object_path)
@@ -194,7 +202,10 @@ class KDialogProgressBar(ProgressBar):
 		self.props = dbus.Interface(bar, 'org.freedesktop.DBus.Properties')
 
 	def wasCancelled(self):
-		return self.bar.wasCancelled()
+		try:
+			return self.bar.wasCancelled()
+		except dbus.DBusException:
+			return True
 
 	def setMaximum(self, maximum):
 		self.props.Set('org.kde.kdialog.ProgressDialog', 'maximum', maximum)
@@ -206,7 +217,10 @@ class KDialogProgressBar(ProgressBar):
 		self.bar.setLabelText(label)
 
 	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
-		self.bar.close()
+		try:
+			self.bar.close()
+		except dbus.DBusException:
+			pass
 
 class TextProgressBar(ProgressBar):
 	def __init__(self, label, maximum):
@@ -471,12 +485,14 @@ def parse_curl(curl):
 
 def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 	try:
-		running  = True
-		headers  = meta['headers']
-		m3u_url  = meta['m3u_url']
-		outname  = os.path.split(outfile)[1]
-		cachedir = outfile + '.download'
-		metaname = os.path.join(cachedir, 'download.json')
+		running    = True
+		headers    = meta['headers']
+		m3u_url    = meta['m3u_url']
+		livestream = meta.get('livestream', False)
+		outname    = os.path.split(outfile)[1]
+		cachedir   = outfile + '.download'
+		metaname   = os.path.join(cachedir, 'download.json')
+		live_assemble = meta['live_assemble']
 
 		if thread_count < 1:
 			raise ValueError('thread_count must be greater than or equal 1')
@@ -543,22 +559,63 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 
 					elif content_type == 'text/html' and resp.url.startswith('https://www.twitch.tv/'):
 						# it was a twitch video page (html) instead
-						broadcast_id = urlparse(resp.url).path.split('/')[3]
+						path = urlparse(resp.url).path.split('/')
 
-						resp = session.get("https://api.twitch.tv/api/vods/%s/access_token?need_https=false" % broadcast_id, headers=headers)
-						resp.raise_for_status()
-						data = json.loads(resp.text)
+						if len(path) == 2:
+							channel_id = path[1]
 
-						if progress.wasCancelled():
-							raise KeyboardInterrupt
+# This fails with 401 but the rest works without it!
+#							resp = session.get("https://api.twitch.tv/api/viewer/token.json", headers=headers)
+#							resp.raise_for_status()
+#							data = json.loads(resp.text)
+#
+#							if progress.wasCancelled():
+#								raise KeyboardInterrupt
 
-						m3u_url = "https://usher.ttvnw.net/vod/%s.m3u8?%s" % (broadcast_id, mkquery(
-							nauth=data['token'],
-							nauthsig=data['sig'],
-							allow_source='true',
-							allow_spectre='true' #,
-#							p=??? # TODO: find out where this comes from, but seems to be ignored anyway
-						))
+#							oauth_token = data['token']
+
+							resp = session.get("https://api.twitch.tv/api/channels/%s/access_token?%s" % (channel_id, mkquery(
+								adblock='false',
+								need_https='true',
+								platform='web',
+								player_type='site' #,
+#								oauth_token=oauth_token
+							)), headers=headers)
+							resp.raise_for_status()
+							data = json.loads(resp.text)
+
+							if progress.wasCancelled():
+								raise KeyboardInterrupt
+
+							m3u_url = "https://usher.ttvnw.net/api/channel/hls/%s.m3u8?%s" % (channel_id, mkquery(
+								token=data['token'],
+								sig=data['sig'],
+								allow_source='true',
+								allow_spectre='true',
+								expgroup='regular' #,
+#								p=??? # TODO: find out where this comes from, but seems to be ignored anyway
+							))
+							livestream = True
+
+						elif len(path) == 4 and path[2] == 'v':
+							broadcast_id = path[3]
+
+							resp = session.get("https://api.twitch.tv/api/vods/%s/access_token?need_https=false" % broadcast_id, headers=headers)
+							resp.raise_for_status()
+							data = json.loads(resp.text)
+
+							if progress.wasCancelled():
+								raise KeyboardInterrupt
+
+							m3u_url = "https://usher.ttvnw.net/vod/%s.m3u8?%s" % (broadcast_id, mkquery(
+								nauth=data['token'],
+								nauthsig=data['sig'],
+								allow_source='true',
+								allow_spectre='true' #,
+#								p=??? # TODO: find out where this comes from, but seems to be ignored anyway
+							))
+						else:
+							raise Exception('Unsupported Twitch URL')
 
 						resp = session.get(m3u_url, headers=headers)
 						resp.raise_for_status()
@@ -593,8 +650,10 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 
 						playlist = parse_m3u8(data, m3u_url)
 
-					meta['cookies'] = requests.utils.dict_from_cookiejar(session.cookies)
-					meta['playlist'] = {
+					meta['m3u_url']    = m3u_url
+					meta['livestream'] = livestream
+					meta['cookies']    = requests.utils.dict_from_cookiejar(session.cookies)
+					meta['playlist']   = {
 						'meta':   playlist.meta,
 						'tracks': [{'url':track.url, 'meta':track.meta} for track in playlist.tracks]
 					}
@@ -607,8 +666,12 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 
 				chunk_count = len(playlist.tracks)
 				finished_count = 0
-				todo = []
 				missing_tracks = set()
+
+				progress.setMaximum(len(missing_tracks))
+				start_time = time()
+				finished_queue = Queue()
+				worker_queues = [Queue() for i in range(thread_count)]
 
 				for i in range(chunk_count):
 					chunkpath = os.path.join(cachedir, '%d.ts' % i)
@@ -616,12 +679,8 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 						finished_count += 1
 					else:
 						missing_tracks.add(i)
-						todo.append((i, playlist.tracks[i], chunkpath))
-
-				progress.setMaximum(len(missing_tracks))
-				start_time = time()
-				finished_queue = Queue()
-				worker_queues = [Queue() for i in range(thread_count)]
+						item = (i, playlist.tracks[i], chunkpath)
+						worker_queues[i % thread_count].put_nowait(item)
 
 				def worker_func(queue):
 					while running:
@@ -653,29 +712,70 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 					workers.append(thread)
 					thread.start()
 
-				for i, item in enumerate(todo):
-					worker_queues[i % thread_count].put_nowait(item)
-
 				# signal end
-				for queue in worker_queues:
-					queue.put_nowait(None)
+#				for queue in worker_queues:
+#					queue.put_nowait(None)
 
 				while running:
 					tracknr = finished_queue.get()
 					missing_tracks.remove(tracknr)
-					if not missing_tracks:
-						running = False
 
-					dl_count = len(todo) - len(missing_tracks)
+					dl_count = chunk_count - len(missing_tracks)
 					elapsed  = time() - start_time
 					avgtime  = elapsed / dl_count
-					esttime  = avgtime * len(todo)
+					esttime  = avgtime * chunk_count
 					remtime  = esttime - elapsed
 
 					progress.setValue(dl_count)
 					progress.setLabelText('Downloading »%s« ETA -%s' % (outname, fmt_span(remtime)))
 					if progress.wasCancelled():
 						raise KeyboardInterrupt
+
+					if not missing_tracks:
+						if livestream:
+							resp = session.get(m3u_url, headers=headers)
+							resp.raise_for_status()
+							data = resp.text
+							content_type = resp.headers['content-type'].split(";")[0]
+
+							playlist = parse_m3u8(data, m3u_url)
+							meta['cookies']  = requests.utils.dict_from_cookiejar(session.cookies)
+							meta['playlist'] = {
+								'meta':   playlist.meta,
+								'tracks': [{'url':track.url, 'meta':track.meta} for track in playlist.tracks]
+							}
+
+							with open(metaname, 'wb') as fp:
+								json.dump(meta, fp)
+
+							if progress.wasCancelled():
+								raise KeyboardInterrupt
+
+							new_chunk_count = len(playlist.tracks)
+
+							if new_chunk_count == 0:
+								running = False
+								# signal end
+								for queue in worker_queues:
+									queue.put_nowait(None)
+							else:
+								for i in range(chunk_count, chunk_count + new_chunk_count):
+									chunkpath = os.path.join(cachedir, '%d.ts' % i)
+									if os.path.exists(chunkpath):
+										finished_count += 1
+									else:
+										missing_tracks.add(i)
+										item = (i, playlist.tracks[i - chunk_count], chunkpath)
+										worker_queues[i % thread_count].put_nowait(item)
+
+								chunk_count += new_chunk_count
+								progress.setMaximum(chunk_count)
+
+						else:
+							running = False
+							# signal end
+							for queue in worker_queues:
+								queue.put_nowait(None)
 
 				progress.setMaximum(len(playlist.tracks))
 				progress.setValue(0)
@@ -702,12 +802,16 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 
 def main(args):
 	use_gui = None
+	live_assemble = False
 	while args:
 		if args[0] == '--gui':
 			use_gui = True
 			del args[0]
 		elif args[0] == '--no-gui':
 			use_gui = False
+			del args[0]
+		elif args[0] == '--live-assemble':
+			live_assemble = True
 			del args[0]
 		else:
 			break
@@ -737,7 +841,7 @@ def main(args):
 				else:
 					curl = ' '.join(sys.argv[2:])
 				m3u_url, headers = parse_curl(curl)
-				meta = {'headers': headers, 'm3u_url': m3u_url}
+				meta = {'headers': headers, 'm3u_url': m3u_url, 'live_assemble': live_assemble}
 
 			get_video_from_m3u(meta, outfile, gui)
 

@@ -13,6 +13,8 @@ Start video playback in a browser (e.g. Chrome), open the developer tools,
 search the network tab for an .m3u or .m3u8 URL, right-click -> copy as cURL,
 start this script and paste what you copied.
 
+`python get_video_from_m3u.py <destination_file>`
+
 Dependencies
 ------------
 

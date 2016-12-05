@@ -306,7 +306,7 @@ class TextGUI(GUI):
 
 	def get_save_filename(self, dirname=None, filter=None):
 		while True:
-			path = self.inputbox('Enter file path:')
+			path = self.inputbox('Enter file name (i.e: streaming.ts):')
 			if path:
 				return path
 

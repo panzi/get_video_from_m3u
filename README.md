@@ -22,3 +22,5 @@ Dependencies
  * [Requests: HTTP for Humans](http://docs.python-requests.org/en/latest/)
  * [DBus-Python](https://pypi.python.org/pypi/dbus-python/) (optional for KDE GUI)
  * [KDE](https://www.kde.org/) (for kdialog, optional)
+ * [lxml](http://lxml.de)
+ `pip install lxml`

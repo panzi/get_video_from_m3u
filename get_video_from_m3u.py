@@ -208,13 +208,22 @@ class KDialogProgressBar(ProgressBar):
 			return True
 
 	def setMaximum(self, maximum):
-		self.props.Set('org.kde.kdialog.ProgressDialog', 'maximum', maximum)
+		try:
+			self.props.Set('org.kde.kdialog.ProgressDialog', 'maximum', maximum)
+		except dbus.DBusException:
+			pass
 
 	def setValue(self, value):
-		self.props.Set('org.kde.kdialog.ProgressDialog', 'value', value)
+		try:
+			self.props.Set('org.kde.kdialog.ProgressDialog', 'value', value)
+		except dbus.DBusException:
+			pass
 
 	def setLabelText(self, label):
-		self.bar.setLabelText(label)
+		try:
+			self.bar.setLabelText(label)
+		except dbus.DBusException:
+			pass
 
 	def __exit__(self, ex_type=None, ex_value=None, ex_traceback=None):
 		try:
@@ -667,8 +676,9 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 				chunk_count = len(playlist.tracks)
 				finished_count = 0
 				missing_tracks = set()
+				finished_tracks = set()
+				last_track_written = -1
 
-				progress.setMaximum(len(missing_tracks))
 				start_time = time()
 				finished_queue = Queue()
 				worker_queues = [Queue() for i in range(thread_count)]
@@ -677,10 +687,13 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 					chunkpath = os.path.join(cachedir, '%d.ts' % i)
 					if os.path.exists(chunkpath):
 						finished_count += 1
+						finished_tracks.add(i)
 					else:
 						missing_tracks.add(i)
 						item = (i, playlist.tracks[i], chunkpath)
 						worker_queues[i % thread_count].put_nowait(item)
+
+				progress.setMaximum(len(missing_tracks))
 
 				def worker_func(queue):
 					while running:
@@ -716,9 +729,26 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 #				for queue in worker_queues:
 #					queue.put_nowait(None)
 
+				if live_assemble:
+					assemblefp = open(outfile, 'wb')
+				else:
+					assemblefp = None
+
 				while running:
 					tracknr = finished_queue.get()
 					missing_tracks.remove(tracknr)
+					finished_tracks.add(tracknr)
+
+					if live_assemble:
+						while last_track_written + 1 in finished_tracks:
+							last_track_written += 1
+							chunkpath = os.path.join(cachedir, '%d.ts' % last_track_written)
+							with open(chunkpath, 'rb') as chunkfp:
+								chunk = chunkfp.read()
+							assemblefp.write(chunk)
+							if progress.wasCancelled():
+								raise KeyboardInterrupt
+							print('last_track_written:', last_track_written, playlist.tracks[last_track_written].url)
 
 					dl_count = chunk_count - len(missing_tracks)
 					elapsed  = time() - start_time
@@ -733,12 +763,27 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 
 					if not missing_tracks:
 						if livestream:
-							resp = session.get(m3u_url, headers=headers)
-							resp.raise_for_status()
-							data = resp.text
-							content_type = resp.headers['content-type'].split(";")[0]
+							
+							# XXX: Bugs! Rewrite!
+							known_urls = set(track.url for track in playlist.tracks)
+							while True:
+								resp = session.get(m3u_url, headers=headers)
+								resp.raise_for_status()
+								data = resp.text
+								content_type = resp.headers['content-type'].split(";")[0]
 
-							playlist = parse_m3u8(data, m3u_url)
+								if progress.wasCancelled():
+									raise KeyboardInterrupt
+
+								new_playlist = parse_m3u8(data, m3u_url)
+								for i, track in enumerate(new_playlist.tracks):
+									if track.url not in known_urls:
+										playlist.tracks += new_playlist.tracks[i:]
+										break
+
+								if len(playlist.tracks) > chunk_count:
+									break
+
 							meta['cookies']  = requests.utils.dict_from_cookiejar(session.cookies)
 							meta['playlist'] = {
 								'meta':   playlist.meta,
@@ -748,27 +793,25 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 							with open(metaname, 'wb') as fp:
 								json.dump(meta, fp)
 
-							if progress.wasCancelled():
-								raise KeyboardInterrupt
-
 							new_chunk_count = len(playlist.tracks)
 
-							if new_chunk_count == 0:
+							if len(new_playlist.tracks) == 0:
 								running = False
 								# signal end
 								for queue in worker_queues:
 									queue.put_nowait(None)
 							else:
-								for i in range(chunk_count, chunk_count + new_chunk_count):
+								for i in range(chunk_count, new_chunk_count):
 									chunkpath = os.path.join(cachedir, '%d.ts' % i)
 									if os.path.exists(chunkpath):
 										finished_count += 1
+										finished_tracks.add(i)
 									else:
 										missing_tracks.add(i)
 										item = (i, playlist.tracks[i - chunk_count], chunkpath)
 										worker_queues[i % thread_count].put_nowait(item)
 
-								chunk_count += new_chunk_count
+								chunk_count = new_chunk_count
 								progress.setMaximum(chunk_count)
 
 						else:
@@ -777,19 +820,23 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 							for queue in worker_queues:
 								queue.put_nowait(None)
 
-				progress.setMaximum(len(playlist.tracks))
-				progress.setValue(0)
-				progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
-				with open(outfile, 'wb') as fp:
-					for i in range(len(playlist.tracks)):
-						progress.setValue(i + 1)
-						progress.setLabelText('Assembling »%s« %d/%d' % (outname, i+1, len(playlist.tracks)))
-						chunkpath = os.path.join(cachedir, '%d.ts' % i)
-						with open(chunkpath, 'rb') as chunkfp:
-							chunk = chunkfp.read()
-						fp.write(chunk)
-						if progress.wasCancelled():
-							raise KeyboardInterrupt
+				if live_assemble:
+					assemblefp.close()
+
+				else:
+					progress.setMaximum(len(playlist.tracks))
+					progress.setValue(0)
+					progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
+					with open(outfile, 'wb') as assemblefp:
+						for i in range(len(playlist.tracks)):
+							progress.setValue(i + 1)
+							progress.setLabelText('Assembling »%s« %d/%d' % (outname, i+1, len(playlist.tracks)))
+							chunkpath = os.path.join(cachedir, '%d.ts' % i)
+							with open(chunkpath, 'rb') as chunkfp:
+								chunk = chunkfp.read()
+							assemblefp.write(chunk)
+							if progress.wasCancelled():
+								raise KeyboardInterrupt
 
 				shutil.rmtree(cachedir)
 
@@ -824,7 +871,7 @@ def main(args):
 			if len(args) < 1:
 				outfile = gui.get_save_filename(filter='*.ts')
 			else:
-				outfile = sys.argv[1]
+				outfile = args[0]
 
 			cachedir = outfile + '.download'
 			metaname = os.path.join(cachedir, 'download.json')
@@ -839,7 +886,7 @@ def main(args):
 				if len(args) < 2:
 					curl = gui.inputbox('Paste M3U URL/cURL from network tab:')
 				else:
-					curl = ' '.join(sys.argv[2:])
+					curl = ' '.join(args[1:])
 				m3u_url, headers = parse_curl(curl)
 				meta = {'headers': headers, 'm3u_url': m3u_url, 'live_assemble': live_assemble}
 

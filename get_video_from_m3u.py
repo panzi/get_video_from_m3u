@@ -502,7 +502,7 @@ def parse_curl(curl):
 
 	return m3u_url, headers
 
-def get_video_from_m3u(meta, outfile, gui, thread_count=6):
+def get_video_from_m3u(meta, outfile, gui):
 	try:
 		running    = True
 		headers    = meta['headers']
@@ -514,6 +514,7 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 		live_assemble = meta['live_assemble']
 		ffmpeg     = meta['ffmpeg']
 		keep_cache = meta['keep_cache']
+		thread_count = meta['thread_count']
 
 		if thread_count < 1:
 			raise ValueError('thread_count must be greater than or equal 1')
@@ -897,6 +898,7 @@ def main(args):
 	live_assemble = False
 	ffmpeg = None
 	keep_cache = False
+	thread_count = 6
 	while args:
 		arg = args[0]
 		if arg == '--gui':
@@ -911,6 +913,11 @@ def main(args):
 			ffmpeg = False
 		elif arg == '--keep-cache':
 			keep_cache = True
+		elif arg == '--thread-count':
+			thread_count = int(args[1])
+			del args[0]
+		elif arg.startswith('--thread-count='):
+			thread_count = int(arg.split('=',1)[1])
 		elif arg == '--':
 			del args[0]
 			break
@@ -957,7 +964,8 @@ def main(args):
 					'm3u_url': m3u_url,
 					'live_assemble': live_assemble,
 					'ffmpeg': ffmpeg,
-					'keep_cache': keep_cache
+					'keep_cache': keep_cache,
+					'thread_count': thread_count
 				}
 
 			get_video_from_m3u(meta, outfile, gui)

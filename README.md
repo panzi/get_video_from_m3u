@@ -20,13 +20,14 @@ Arguments that are not provided on the command line are asked for in the GUI.
 
 ### Options
 
-	--gui             Use KDE GUI (default if kdialog exists)
-	--no-gui          No GUI, only output text on command line
-	--live-assemble   experimental and currently broken!
-	--ffmpeg          Pipe concatenated chunks through ffmpeg to properly
-	                  recreate container. (default if ffmpeg exists)
-	--no-ffmpeg       Just concatenate the downloaded chunks.
-	--keep-cache      Keep cache folder and files after finishing download.
+	--gui                 Use KDE GUI (default if kdialog exists)
+	--no-gui              No GUI, only output text on command line
+	--live-assemble       experimental and currently broken!
+	--ffmpeg              Pipe concatenated chunks through ffmpeg to properly
+	                      recreate container. (default if ffmpeg exists)
+	--no-ffmpeg           Just concatenate the downloaded chunks.
+	--keep-cache          Keep cache folder and files after finishing download.
+	--thread-count=COUNT  Use COUNT threads for downloading.
 
 Dependencies
 ------------

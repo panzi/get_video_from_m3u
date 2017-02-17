@@ -11,9 +11,22 @@ Usage
 
 Start video playback in a browser (e.g. Chrome), open the developer tools,
 search the network tab for an .m3u or .m3u8 URL, right-click -> copy as cURL,
-start this script and paste what you copied.
+start this script, choose an output file and then paste what you copied into
+the text input field.
 
-`python get_video_from_m3u.py <destination_file>`
+Arguments that are not provided on the command line are asked for in the GUI.
+
+	python get_video_from_m3u.py [options] [--] [output file name] [URL or cURL]
+
+### Options
+
+	--gui             Use KDE GUI (default if kdialog exists)
+	--no-gui          No GUI, only output text on command line
+	--live-assemble   experimental and currently broken!
+	--ffmpeg          Pipe concatenated chunks through ffmpeg to properly
+	                  recreate container. (default if ffmpeg exists)
+	--no-ffmpeg       Just concatenate the downloaded chunks.
+	--keep-cache      Keep cache folder and files after finishing download.
 
 Dependencies
 ------------
@@ -23,4 +36,3 @@ Dependencies
  * [DBus-Python](https://pypi.python.org/pypi/dbus-python/) (optional for KDE GUI)
  * [KDE](https://www.kde.org/) (for kdialog, optional)
  * [lxml](http://lxml.de)
- `pip install lxml`

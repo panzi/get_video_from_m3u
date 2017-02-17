@@ -62,6 +62,16 @@ def has_kdialog():
 		return False
 	return True
 
+def has_ffmpeg():
+	try:
+		p = subprocess.Popen(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		p.stdout.read()
+		if p.wait() != 0:
+			return False
+	except OSError as e:
+		return False
+	return True
+
 def text_cmd(*cmd):
 	p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 	out = p.stdout.read()
@@ -502,6 +512,8 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 		cachedir   = outfile + '.download'
 		metaname   = os.path.join(cachedir, 'download.json')
 		live_assemble = meta['live_assemble']
+		ffmpeg     = meta['ffmpeg']
+		keep_cache = meta['keep_cache']
 
 		if thread_count < 1:
 			raise ValueError('thread_count must be greater than or equal 1')
@@ -735,9 +747,10 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 					assemblefp = None
 
 				while running:
-					tracknr = finished_queue.get()
-					missing_tracks.remove(tracknr)
-					finished_tracks.add(tracknr)
+					if missing_tracks:
+						tracknr = finished_queue.get()
+						missing_tracks.remove(tracknr)
+						finished_tracks.add(tracknr)
 
 					if live_assemble:
 						while last_track_written + 1 in finished_tracks:
@@ -763,7 +776,7 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 
 					if not missing_tracks:
 						if livestream:
-							
+
 							# XXX: Bugs! Rewrite!
 							known_urls = set(track.url for track in playlist.tracks)
 							while True:
@@ -820,25 +833,57 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 							for queue in worker_queues:
 								queue.put_nowait(None)
 
-				if live_assemble:
-					assemblefp.close()
-
-				else:
-					progress.setMaximum(len(playlist.tracks))
-					progress.setValue(0)
-					progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
-					with open(outfile, 'wb') as assemblefp:
+				def concat_chunks(outfp):
+					try:
 						for i in range(len(playlist.tracks)):
 							progress.setValue(i + 1)
 							progress.setLabelText('Assembling »%s« %d/%d' % (outname, i+1, len(playlist.tracks)))
 							chunkpath = os.path.join(cachedir, '%d.ts' % i)
 							with open(chunkpath, 'rb') as chunkfp:
 								chunk = chunkfp.read()
-							assemblefp.write(chunk)
+							outfp.write(chunk)
 							if progress.wasCancelled():
 								raise KeyboardInterrupt
+					finally:
+						outfp.close()
 
-				shutil.rmtree(cachedir)
+				if live_assemble:
+					assemblefp.close()
+
+				elif ffmpeg:
+					progress.setMaximum(len(playlist.tracks))
+					progress.setValue(0)
+					progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
+
+					cmd = ['ffmpeg', '-y', '-loglevel', 'info', '-f', 'mpegts', '-i', '-', '-vcodec', 'copy', '-acodec', 'copy', outfile]
+					p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
+					# can't pass thousands of files as arguments because
+					# ffmpeg tries to open them all at once and you get
+					# a too many open files error
+					write_thread = Thread(target=concat_chunks, args=(p.stdin, ))
+					write_thread.daemon = True
+					write_thread.start()
+
+					error_lines = []
+					for line in p.stderr:
+						sys.stderr.write(line)
+						error_lines.append(line)
+						if progress.wasCancelled():
+							raise KeyboardInterrupt
+
+					if p.wait() != 0:
+						raise Exception("Error assembling video!\n\n" + ''.join(error_lines))
+
+				else:
+					progress.setMaximum(len(playlist.tracks))
+					progress.setValue(0)
+					progress.setLabelText('Assembling »%s« 0/%d' % (outname, len(playlist.tracks)))
+					with open(outfile, 'wb') as assemblefp:
+						concat_chunks(assemblefp)
+
+				if not keep_cache:
+					shutil.rmtree(cachedir)
 
 		gui.passive_popup('Finished saving video: '+outfile)
 
@@ -850,26 +895,45 @@ def get_video_from_m3u(meta, outfile, gui, thread_count=6):
 def main(args):
 	use_gui = None
 	live_assemble = False
+	ffmpeg = None
+	keep_cache = False
 	while args:
-		if args[0] == '--gui':
+		arg = args[0]
+		if arg == '--gui':
 			use_gui = True
-			del args[0]
-		elif args[0] == '--no-gui':
+		elif arg == '--no-gui':
 			use_gui = False
-			del args[0]
-		elif args[0] == '--live-assemble':
+		elif arg == '--live-assemble':
 			live_assemble = True
+		elif arg == '--ffmpeg':
+			ffmpeg = True
+		elif arg == '--no-ffmpeg':
+			ffmpeg = False
+		elif arg == '--keep-cache':
+			keep_cache = True
+		elif arg == '--':
 			del args[0]
+			break
 		else:
 			break
+
+		del args[0]
 
 	if use_gui is None:
 		use_gui = has_kdialog()
 
+	if ffmpeg is None:
+		ffmpeg = has_ffmpeg()
+
+	if ffmpeg:
+		ext_filter = '*.mp4, *.mkv, *.ts, *.mpeg'
+	else:
+		ext_filter = '*.ts'
+
 	with (KDialogGUI() if use_gui else TextGUI()) as gui:
 		try:
 			if len(args) < 1:
-				outfile = gui.get_save_filename(filter='*.ts')
+				outfile = gui.get_save_filename(filter=ext_filter)
 			else:
 				outfile = args[0]
 
@@ -888,7 +952,13 @@ def main(args):
 				else:
 					curl = ' '.join(args[1:])
 				m3u_url, headers = parse_curl(curl)
-				meta = {'headers': headers, 'm3u_url': m3u_url, 'live_assemble': live_assemble}
+				meta = {
+					'headers': headers,
+					'm3u_url': m3u_url,
+					'live_assemble': live_assemble,
+					'ffmpeg': ffmpeg,
+					'keep_cache': keep_cache
+				}
 
 			get_video_from_m3u(meta, outfile, gui)
 

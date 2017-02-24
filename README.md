@@ -20,6 +20,7 @@ Arguments that are not provided on the command line are asked for in the GUI.
 
 ### Options
 
+	--help                Show this help message.
 	--gui                 Use KDE GUI (default if kdialog exists)
 	--no-gui              No GUI, only output text on command line
 	--live-assemble       experimental and currently broken!

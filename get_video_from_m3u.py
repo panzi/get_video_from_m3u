@@ -919,20 +919,28 @@ def main(args):
 		elif arg.startswith('--thread-count='):
 			thread_count = int(arg.split('=',1)[1])
 		elif arg == '--help':
+			_has_kdialog = has_kdialog()
+			_has_ffmpeg = has_ffmpeg()
+
 			print("""\
 Usage: get_video_from_m3u.py [options] [--] [output file name] [URL or cURL]
 
 OPTIONS:
 	--help                Show this help message.
-	--gui                 Use KDE GUI (default if kdialog exists)
-	--no-gui              No GUI, only output text on command line
+	--gui                 Use KDE GUI{gui}
+	--no-gui              No GUI, only output text on command line{no_gui}
 	--live-assemble       experimental and currently broken!
 	--ffmpeg              Pipe concatenated chunks through ffmpeg to properly
-	                      recreate container. (default if ffmpeg exists)
-	--no-ffmpeg           Just concatenate the downloaded chunks.
+	                      recreate container.{ffmpeg}
+	--no-ffmpeg           Just concatenate the downloaded chunks.{no_ffmpeg}
 	--keep-cache          Keep cache folder and files after finishing download.
 	--thread-count=COUNT  Use COUNT threads for downloading.
-""")
+""".format(
+		gui       = ' (default)' if     _has_kdialog else '',
+		no_gui    = ' (default)' if not _has_kdialog else '',
+		ffmpeg    = ' (default)' if     _has_ffmpeg  else '',
+		no_ffmpeg = ' (default)' if not _has_ffmpeg  else ''
+	))
 
 			return
 		elif arg == '--':

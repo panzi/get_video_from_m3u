@@ -4,7 +4,8 @@ get\_video\_from\_m3u
 This script downloads MPEG-TS chunks as referred by a given m3u playlist
 into a local file. Use this if you want to watch a streamed video on
 another device or if you want to buffer it as a whole at maximum quality,
-even though your internet connection sucks.
+even though your internet connection sucks or when you want to replay it
+in higher speed using your player software of choice.
 
 Usage
 -----
